@@ -1,267 +1,239 @@
+"""
+AI File Platform
+=================
+Flask-Webanwendung, die (fast) jedes Dateiformat automatisch in Text
+umwandelt: PDF, Bilder (OCR), Audio (Whisper), Video (Whisper),
+DOCX, XLSX, ZIP-Archive (rekursiv entpacken & verarbeiten).
+
+Start lokal:
+    pip install -r requirements.txt
+    python app.py
+
+Deployment auf Render:
+    siehe README.md
+"""
+
 import os
-import zipfile
-import shutil
-from flask import Flask, render_template, request, send_file, jsonify, after_this_request
-from werkzeug.utils import secure_filename
-from converters.router import ConverterRouter
 import uuid
-import threading
-import time
+import shutil
+import zipfile
 from pathlib import Path
 
+from flask import (
+    Flask, request, render_template, send_from_directory,
+    redirect, url_for, flash, jsonify
+)
+from werkzeug.utils import secure_filename
+
+from converter import pdf as pdf_conv
+from converter import image as image_conv
+from converter import audio as audio_conv
+from converter import video as video_conv
+from converter import office as office_conv
+from converter import archive as archive_conv
+from duplicate_finder.finder import find_duplicates
+from feedback import feedback_bp
+from feedback import init_mail
+
+BASE_DIR = Path(__file__).resolve().parent
+UPLOAD_DIR = BASE_DIR / "uploads"
+OUTPUT_DIR = BASE_DIR / "outputs"
+UPLOAD_DIR.mkdir(exist_ok=True)
+OUTPUT_DIR.mkdir(exist_ok=True)
+
+MAX_CONTENT_LENGTH = 500 * 1024 * 1024  # 500 MB Upload-Limit
+
 app = Flask(__name__)
-app.config['UPLOAD_FOLDER'] = 'uploads'
-app.config['OUTPUT_FOLDER'] = 'outputs'
-app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024  # 500MB max
-app.config['SECRET_KEY'] = os.urandom(24)
 
-# Erstelle Ordner
-os.makedirs(app.config['UPLOAD_FOLDER'], exist_ok=True)
-os.makedirs(app.config['OUTPUT_FOLDER'], exist_ok=True)
-os.makedirs('static', exist_ok=True)
+init_mail(app)
 
-# Globale Session-Status-Speicher
-sessions = {}
+app.register_blueprint(feedback_bp)
 
-class ConversionSession:
-    def __init__(self, session_id):
-        self.session_id = session_id
-        self.upload_dir = os.path.join(app.config['UPLOAD_FOLDER'], session_id)
-        self.output_dir = os.path.join(app.config['OUTPUT_FOLDER'], session_id)
-        self.files = []
-        self.converted_files = []
-        self.status = 'processing'
-        self.progress = 0
-        self.total_files = 0
-        self.processed_files = 0
-        self.errors = []
-        
-        os.makedirs(self.upload_dir, exist_ok=True)
-        os.makedirs(self.output_dir, exist_ok=True)
-    
-    def add_file(self, filename, filepath):
-        self.files.append({
-            'name': filename,
-            'path': filepath,
-            'status': 'pending'
-        })
-        self.total_files += 1
-    
-    def update_progress(self):
-        self.progress = int((self.processed_files / self.total_files) * 100) if self.total_files > 0 else 0
-    
-    def get_status(self):
-        return {
-            'status': self.status,
-            'progress': self.progress,
-            'total_files': self.total_files,
-            'processed_files': self.processed_files,
-            'files': self.files,
-            'converted_files': self.converted_files,
-            'errors': self.errors
-        }
+app.secret_key = os.environ.get(
+    "SECRET_KEY",
+    "dev-secret-change-me"
+)
 
-def is_ignored(filename):
-    """Überprüft ob eine Datei ignoriert werden soll"""
-    ignored_patterns = [
-        '.pyc', '.dll', '.exe', '.so',
-        '__pycache__', '.git', '.venv', 'venv',
-        '.DS_Store', 'Thumbs.db'
-    ]
-    
-    for pattern in ignored_patterns:
-        if pattern in filename:
-            return True
-    return False
+app.config["MAX_CONTENT_LENGTH"] = MAX_CONTENT_LENGTH
 
-def process_zip_file(zip_path, session):
-    """Extrahiert eine ZIP-Datei und fügt die enthaltenen Dateien zur Session hinzu"""
-    try:
-        with zipfile.ZipFile(zip_path, 'r') as zip_ref:
-            extract_dir = os.path.join(session.upload_dir, 'extracted')
-            os.makedirs(extract_dir, exist_ok=True)
-            zip_ref.extractall(extract_dir)
-            
-            # Verarbeite alle extrahierten Dateien
-            for root, dirs, files in os.walk(extract_dir):
-                for file in files:
-                    file_path = os.path.join(root, file)
-                    rel_path = os.path.relpath(file_path, extract_dir)
-                    
-                    if not is_ignored(rel_path):
-                        # Kopiere Datei in den Upload-Ordner
-                        dest_path = os.path.join(session.upload_dir, rel_path)
-                        os.makedirs(os.path.dirname(dest_path), exist_ok=True)
-                        shutil.copy2(file_path, dest_path)
-                        session.add_file(rel_path, dest_path)
-            
-            # Lösche temporären Extraktionsordner
-            shutil.rmtree(extract_dir)
-            
-    except Exception as e:
-        session.errors.append(f"Fehler beim Entpacken von {zip_path}: {str(e)}")
+# Dateiendung -> Konverter-Funktion (jede Funktion nimmt einen Pfad
+# und gibt extrahierten Text als String zurück)
+CONVERTERS = {
+    ".pdf": pdf_conv.pdf_to_text,
+    ".png": image_conv.image_to_text,
+    ".jpg": image_conv.image_to_text,
+    ".jpeg": image_conv.image_to_text,
+    ".bmp": image_conv.image_to_text,
+    ".tiff": image_conv.image_to_text,
+    ".gif": image_conv.image_to_text,
+    ".mp3": audio_conv.audio_to_text,
+    ".wav": audio_conv.audio_to_text,
+    ".m4a": audio_conv.audio_to_text,
+    ".flac": audio_conv.audio_to_text,
+    ".ogg": audio_conv.audio_to_text,
+    ".mp4": video_conv.video_to_text,
+    ".mov": video_conv.video_to_text,
+    ".avi": video_conv.video_to_text,
+    ".mkv": video_conv.video_to_text,
+    ".webm": video_conv.video_to_text,
+    ".docx": office_conv.docx_to_text,
+    ".xlsx": office_conv.xlsx_to_text,
+    ".csv": office_conv.csv_to_text,
+    ".odt": office_conv.odt_to_text,
+}
 
-def process_session(session_id):
-    """Verarbeitet alle Dateien in einer Session"""
-    session = sessions.get(session_id)
-    if not session:
+ARCHIVE_EXTENSIONS = {".zip"}
+
+
+def get_converter(filepath: Path):
+    return CONVERTERS.get(filepath.suffix.lower())
+
+
+def process_single_file(filepath: Path, results: list, errors: list):
+    """Verarbeitet eine einzelne Datei und hängt das Ergebnis an results an."""
+    converter = get_converter(filepath)
+    if converter is None:
+        errors.append(f"{filepath.name}: Kein Konverter für dieses Format gefunden.")
         return
-    
-    router = ConverterRouter()
-    
     try:
-        # Verarbeite alle Dateien
-        for file_info in session.files:
-            try:
-                file_path = file_info['path']
-                file_name = file_info['name']
-                
-                # Prüfe ob Datei konvertiert werden kann
-                if router.can_convert(file_name):
-                    # Konvertiere Datei
-                    output_path = os.path.join(session.output_dir, f"{os.path.splitext(file_name)[0]}.txt")
-                    success = router.convert(file_path, output_path)
-                    
-                    if success and os.path.exists(output_path):
-                        session.converted_files.append({
-                            'original': file_name,
-                            'converted': os.path.basename(output_path)
-                        })
-                        file_info['status'] = 'success'
-                    else:
-                        file_info['status'] = 'error'
-                        session.errors.append(f"Fehler beim Konvertieren von {file_name}")
-                else:
-                    file_info['status'] = 'skipped'
-                    
-            except Exception as e:
-                file_info['status'] = 'error'
-                session.errors.append(f"Fehler bei {file_info['name']}: {str(e)}")
-            
-            session.processed_files += 1
-            session.update_progress()
-            
-        session.status = 'completed'
-        
-    except Exception as e:
-        session.status = 'error'
-        session.errors.append(f"Allgemeiner Fehler: {str(e)}")
+        text = converter(str(filepath))
+        results.append({"filename": filepath.name, "text": text})
+    except Exception as exc:  # bewusst breit, damit ein Fehler nicht den ganzen Batch stoppt
+        errors.append(f"{filepath.name}: {exc}")
 
-@app.route('/')
-def index():
-    return render_template('index.html')
 
-@app.route('/upload', methods=['POST'])
-def upload_files():
-    """Verarbeitet Datei-Uploads"""
-    session_id = str(uuid.uuid4())
-    session = ConversionSession(session_id)
-    sessions[session_id] = session
-    
-    files = request.files.getlist('files')
-    
-    for file in files:
-        if file.filename == '':
-            continue
-            
-        filename = secure_filename(file.filename)
-        
-        # Prüfe ob Datei ignoriert werden soll
-        if is_ignored(filename):
-            continue
-            
-        file_path = os.path.join(session.upload_dir, filename)
-        file.save(file_path)
-        
-        # Prüfe ob es eine ZIP-Datei ist
-        if filename.lower().endswith('.zip'):
-            process_zip_file(file_path, session)
-        else:
-            session.add_file(filename, file_path)
-    
-    # Starte Verarbeitung in Hintergrund-Thread
-    thread = threading.Thread(target=process_session, args=(session_id,))
-    thread.daemon = True
-    thread.start()
-    
-    return jsonify({'session_id': session_id})
-
-@app.route('/status/<session_id>')
-def get_status(session_id):
-    """Gibt den aktuellen Verarbeitungsstatus zurück"""
-    session = sessions.get(session_id)
-    if not session:
-        return jsonify({'error': 'Session nicht gefunden'}), 404
-    
-    return jsonify(session.get_status())
-
-@app.route('/download/<session_id>')
-def download_files(session_id):
-    """Lädt alle konvertierten Dateien als ZIP herunter"""
-    session = sessions.get(session_id)
-    if not session:
-        return jsonify({'error': 'Session nicht gefunden'}), 404
-    
-    if session.status != 'completed':
-        return jsonify({'error': 'Konvertierung noch nicht abgeschlossen'}), 400
-    
-    # Erstelle ZIP-Datei
-    zip_path = os.path.join(app.config['OUTPUT_FOLDER'], f"{session_id}.zip")
-    
-    with zipfile.ZipFile(zip_path, 'w') as zipf:
-        for converted_file in session.converted_files:
-            file_path = os.path.join(session.output_dir, converted_file['converted'])
-            if os.path.exists(file_path):
-                zipf.write(file_path, converted_file['converted'])
-    
-    # Lösche Session nach Download
-    @after_this_request
-    def cleanup(response):
+def process_path(filepath: Path, results: list, errors: list):
+    """Verarbeitet eine Datei ODER, falls es ein Archiv ist, entpackt es rekursiv."""
+    if filepath.suffix.lower() in ARCHIVE_EXTENSIONS:
+        extract_dir = filepath.parent / (filepath.stem + "_extracted")
         try:
-            # Lösche temporäre Dateien
-            shutil.rmtree(session.upload_dir, ignore_errors=True)
-            shutil.rmtree(session.output_dir, ignore_errors=True)
-            os.remove(zip_path)
-            del sessions[session_id]
-        except:
-            pass
-        return response
-    
-    return send_file(zip_path, as_attachment=True, download_name=f"converted_files_{session_id}.zip")
+            archive_conv.extract_zip(str(filepath), str(extract_dir))
+        except Exception as exc:
+            errors.append(f"{filepath.name}: Entpacken fehlgeschlagen ({exc})")
+            return
+        for root, _, files in os.walk(extract_dir):
+            for fname in files:
+                process_path(Path(root) / fname, results, errors)
+    else:
+        process_single_file(filepath, results, errors)
 
-@app.route('/download/<session_id>/<filename>')
-def download_single_file(session_id, filename):
-    """Lädt eine einzelne konvertierte Datei herunter"""
-    session = sessions.get(session_id)
-    if not session:
-        return jsonify({'error': 'Session nicht gefunden'}), 404
-    
-    file_path = os.path.join(session.output_dir, filename)
-    if not os.path.exists(file_path):
-        return jsonify({'error': 'Datei nicht gefunden'}), 404
-    
-    return send_file(file_path, as_attachment=True)
 
-@app.route('/preview/<session_id>/<filename>')
-def preview_file(session_id, filename):
-    """Zeigt eine Vorschau der konvertierten Datei"""
-    session = sessions.get(session_id)
-    if not session:
-        return jsonify({'error': 'Session nicht gefunden'}), 404
-    
-    file_path = os.path.join(session.output_dir, filename)
-    if not os.path.exists(file_path):
-        return jsonify({'error': 'Datei nicht gefunden'}), 404
-    
-    try:
-        with open(file_path, 'r', encoding='utf-8') as f:
-            content = f.read()
-            # Begrenze Vorschau auf 1000 Zeichen
-            if len(content) > 1000:
-                content = content[:1000] + '...'
-            return jsonify({'content': content})
-    except:
-        return jsonify({'error': 'Vorschau nicht verfügbar'}), 400
+@app.route("/feedback-page")
+def feedback_page():
+
+    return render_template(
+        "feedback.html"
+    )
+
+@app.route("/upload", methods=["POST"])
+def upload():
+    if "files" not in request.files:
+        flash("Keine Dateien ausgewählt.")
+        return redirect(url_for("index"))
+
+    files = request.files.getlist("files")
+    if not files or files[0].filename == "":
+        flash("Keine Dateien ausgewählt.")
+        return redirect(url_for("index"))
+
+    session_id = uuid.uuid4().hex[:12]
+    session_dir = UPLOAD_DIR / session_id
+    session_dir.mkdir(parents=True, exist_ok=True)
+
+    saved_paths = []
+    for f in files:
+        filename = secure_filename(f.filename)
+        if not filename:
+            continue
+        dest = session_dir / filename
+        f.save(dest)
+        saved_paths.append(dest)
+
+    results, errors = [], []
+    for p in saved_paths:
+        process_path(p, results, errors)
+
+    # Kombinierten Text als .txt-Datei zum Download bereitstellen
+    combined_txt_path = OUTPUT_DIR / f"{session_id}.txt"
+    with open(combined_txt_path, "w", encoding="utf-8") as out:
+        for r in results:
+            out.write(f"\n{'=' * 60}\nDATEI: {r['filename']}\n{'=' * 60}\n\n")
+            out.write(r["text"])
+            out.write("\n")
+
+    # Aufräumen der Upload-Session (Originaldateien werden nicht mehr gebraucht)
+    shutil.rmtree(session_dir, ignore_errors=True)
+
+    return render_template(
+        "results.html",
+        results=results,
+        errors=errors,
+        download_name=f"{session_id}.txt",
+    )
+
+
+@app.route("/download/<name>")
+def download(name):
+    safe_name = secure_filename(name)
+    return send_from_directory(OUTPUT_DIR, safe_name, as_attachment=True)
+
+
+@app.route("/duplicates", methods=["GET", "POST"])
+def duplicates():
+    if request.method == "GET":
+        return render_template("duplicates.html", groups=None)
+
+    files = request.files.getlist("files")
+    if not files or files[0].filename == "":
+        flash("Keine Dateien ausgewählt.")
+        return redirect(url_for("duplicates"))
+
+    session_id = uuid.uuid4().hex[:12]
+    session_dir = UPLOAD_DIR / ("dup_" + session_id)
+    session_dir.mkdir(parents=True, exist_ok=True)
+
+    for f in files:
+        filename = secure_filename(f.filename)
+        if filename:
+            f.save(session_dir / filename)
+
+    groups = find_duplicates(str(session_dir))
+    shutil.rmtree(session_dir, ignore_errors=True)
+
+    return render_template("duplicates.html", groups=groups)
+
+
+@app.route("/api/convert", methods=["POST"])
+def api_convert():
+    """JSON-API: einzelne Datei hochladen, extrahierten Text als JSON zurückbekommen."""
+    if "file" not in request.files:
+        return jsonify({"error": "Kein Feld 'file' im Request gefunden."}), 400
+
+    f = request.files["file"]
+    filename = secure_filename(f.filename)
+    if not filename:
+        return jsonify({"error": "Ungültiger Dateiname."}), 400
+
+    session_id = uuid.uuid4().hex[:12]
+    session_dir = UPLOAD_DIR / ("api_" + session_id)
+    session_dir.mkdir(parents=True, exist_ok=True)
+    dest = session_dir / filename
+    f.save(dest)
+
+    results, errors = [], []
+    process_path(dest, results, errors)
+    shutil.rmtree(session_dir, ignore_errors=True)
+
+    if errors and not results:
+        return jsonify({"error": errors[0]}), 422
+
+    return jsonify({"results": results, "errors": errors})
+
+
+@app.route("/health")
+def health():
+    return jsonify({"status": "ok"})
+
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
