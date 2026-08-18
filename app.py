@@ -25,12 +25,12 @@ from flask import (
 )
 from werkzeug.utils import secure_filename
 
-from converter import pdf as pdf_conv
-from converter import image as image_conv
-from converter import audio as audio_conv
-from converter import video as video_conv
-from converter import office as office_conv
-from converter import archive as archive_conv
+from converters import pdf as pdf_conv
+from converters import image as image_conv
+from converters import audio as audio_conv
+from converters import video as video_conv
+from converters import office as office_conv
+from converters import archive as archive_conv
 from duplicate_finder.finder import find_duplicates
 from feedback import feedback_bp
 from feedback import init_mail
