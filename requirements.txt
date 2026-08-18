@@ -1,0 +1,11 @@
+Flask
+Werkzeug
+pypdf
+Pillow
+pytesseract
+python-docx
+openpyxl
+PyYAML
+pandas
+beautifulsoup4
+numpy

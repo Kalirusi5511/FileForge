@@ -1,0 +1,539 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI File Platform</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            padding: 40px;
+        }
+        
+        h1 {
+            color: #333;
+            font-size: 2.5em;
+            margin-bottom: 10px;
+            text-align: center;
+        }
+        
+        .subtitle {
+            text-align: center;
+            color: #666;
+            margin-bottom: 30px;
+            font-size: 1.1em;
+        }
+        
+        .upload-area {
+            border: 3px dashed #ddd;
+            border-radius: 15px;
+            padding: 60px 20px;
+            text-align: center;
+            transition: all 0.3s ease;
+            background: #fafafa;
+            cursor: pointer;
+            position: relative;
+        }
+        
+        .upload-area:hover, .upload-area.dragover {
+            border-color: #667eea;
+            background: #f0f0ff;
+            transform: scale(1.01);
+        }
+        
+        .upload-icon {
+            font-size: 4em;
+            margin-bottom: 20px;
+        }
+        
+        .upload-text {
+            font-size: 1.2em;
+            color: #555;
+        }
+        
+        .upload-subtext {
+            color: #999;
+            margin-top: 10px;
+        }
+        
+        #fileInput {
+            display: none;
+        }
+        
+        .file-list {
+            margin-top: 30px;
+        }
+        
+        .file-item {
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 15px 20px;
+            margin-bottom: 10px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            animation: slideIn 0.3s ease;
+        }
+        
+        .file-name {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+        
+        .file-status {
+            padding: 5px 12px;
+            border-radius: 20px;
+            font-size: 0.85em;
+            font-weight: 500;
+        }
+        
+        .status-pending {
+            background: #ffd93d;
+            color: #8b6f00;
+        }
+        
+        .status-processing {
+            background: #6c5ce7;
+            color: white;
+        }
+        
+        .status-success {
+            background: #00b894;
+            color: white;
+        }
+        
+        .status-error {
+            background: #ff6b6b;
+            color: white;
+        }
+        
+        .status-skipped {
+            background: #dfe6e9;
+            color: #2d3436;
+        }
+        
+        .progress-container {
+            margin-top: 30px;
+            background: #f0f0f0;
+            border-radius: 10px;
+            height: 30px;
+            overflow: hidden;
+            position: relative;
+            display: none;
+        }
+        
+        .progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+            transition: width 0.5s ease;
+            width: 0%;
+            border-radius: 10px;
+        }
+        
+        .progress-text {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #333;
+            font-weight: 600;
+            font-size: 0.9em;
+        }
+        
+        .download-section {
+            margin-top: 30px;
+            text-align: center;
+            display: none;
+        }
+        
+        .btn {
+            display: inline-block;
+            padding: 12px 30px;
+            border: none;
+            border-radius: 8px;
+            font-size: 1em;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+        
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(102, 126, 234, 0.4);
+        }
+        
+        .btn-success {
+            background: #00b894;
+            color: white;
+        }
+        
+        .btn-success:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 20px rgba(0, 184, 148, 0.4);
+        }
+        
+        .error-list {
+            margin-top: 20px;
+            background: #fff5f5;
+            border-left: 4px solid #ff6b6b;
+            padding: 15px;
+            border-radius: 5px;
+            display: none;
+        }
+        
+        .error-item {
+            color: #c0392b;
+            font-size: 0.9em;
+            padding: 5px 0;
+        }
+        
+        .preview-section {
+            margin-top: 30px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            padding: 20px;
+            display: none;
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        
+        .preview-content {
+            white-space: pre-wrap;
+            font-family: 'Courier New', monospace;
+            font-size: 0.9em;
+        }
+        
+        @keyframes slideIn {
+            from {
+                opacity: 0;
+                transform: translateY(-10px);
+            }
+            to {
+                opacity: 1;
+                transform: translateY(0);
+            }
+        }
+        
+        .supported-formats {
+            margin-top: 30px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 10px;
+        }
+        
+        .format-tag {
+            display: inline-block;
+            background: #e9ecef;
+            padding: 3px 10px;
+            border-radius: 15px;
+            font-size: 0.85em;
+            margin: 3px;
+            color: #495057;
+        }
+        
+        @media (max-width: 768px) {
+            .container {
+                padding: 20px;
+            }
+            
+            h1 {
+                font-size: 1.8em;
+            }
+            
+            .upload-area {
+                padding: 30px 15px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>📄 AI File Platform</h1>
+        <p class="subtitle">Konvertiere verschiedene Dateiformate in TXT</p>
+        
+        <div class="upload-area" id="dropZone">
+            <div class="upload-icon">📁</div>
+            <div class="upload-text">Dateien hier ablegen oder klicken zum Hochladen</div>
+            <div class="upload-subtext">Unterstützt alle gängigen Formate • Max 500MB</div>
+            <input type="file" id="fileInput" multiple>
+        </div>
+        
+        <div class="progress-container" id="progressContainer">
+            <div class="progress-bar" id="progressBar"></div>
+            <div class="progress-text" id="progressText">0%</div>
+        </div>
+        
+        <div class="file-list" id="fileList"></div>
+        
+        <div class="error-list" id="errorList"></div>
+        
+        <div class="preview-section" id="previewSection">
+            <h4>📝 Vorschau</h4>
+            <div class="preview-content" id="previewContent"></div>
+        </div>
+        
+        <div class="download-section" id="downloadSection">
+            <button class="btn btn-success" id="downloadAllBtn">⬇️ Alles als TXT herunterladen</button>
+        </div>
+        
+        <div class="supported-formats">
+            <strong>Unterstützte Formate:</strong>
+            <span class="format-tag">.txt</span>
+            <span class="format-tag">.md</span>
+            <span class="format-tag">.py</span>
+            <span class="format-tag">.json</span>
+            <span class="format-tag">.xml</span>
+            <span class="format-tag">.yaml</span>
+            <span class="format-tag">.csv</span>
+            <span class="format-tag">.html</span>
+            <span class="format-tag">.css</span>
+            <span class="format-tag">.js</span>
+            <span class="format-tag">.pdf</span>
+            <span class="format-tag">.docx</span>
+            <span class="format-tag">.xlsx</span>
+            <span class="format-tag">.jpg</span>
+            <span class="format-tag">.png</span>
+            <span class="format-tag">.gif</span>
+            <span class="format-tag">.zip</span>
+        </div>
+    </div>
+    
+    <script>
+        let sessionId = null;
+        let statusInterval = null;
+        
+        const dropZone = document.getElementById('dropZone');
+        const fileInput = document.getElementById('fileInput');
+        const fileList = document.getElementById('fileList');
+        const progressContainer = document.getElementById('progressContainer');
+        const progressBar = document.getElementById('progressBar');
+        const progressText = document.getElementById('progressText');
+        const downloadSection = document.getElementById('downloadSection');
+        const downloadAllBtn = document.getElementById('downloadAllBtn');
+        const errorList = document.getElementById('errorList');
+        const previewSection = document.getElementById('previewSection');
+        const previewContent = document.getElementById('previewContent');
+        
+        // Drag & Drop Events
+        dropZone.addEventListener('dragover', (e) => {
+            e.preventDefault();
+            dropZone.classList.add('dragover');
+        });
+        
+        dropZone.addEventListener('dragleave', () => {
+            dropZone.classList.remove('dragover');
+        });
+        
+        dropZone.addEventListener('drop', (e) => {
+            e.preventDefault();
+            dropZone.classList.remove('dragover');
+            const files = e.dataTransfer.files;
+            handleFiles(files);
+        });
+        
+        dropZone.addEventListener('click', () => {
+            fileInput.click();
+        });
+        
+        fileInput.addEventListener('change', (e) => {
+            handleFiles(e.target.files);
+            fileInput.value = '';
+        });
+        
+        function handleFiles(files) {
+            if (files.length === 0) return;
+            
+            const formData = new FormData();
+            for (let file of files) {
+                formData.append('files', file);
+            }
+            
+            // Clear previous results
+            fileList.innerHTML = '';
+            errorList.style.display = 'none';
+            errorList.innerHTML = '';
+            downloadSection.style.display = 'none';
+            previewSection.style.display = 'none';
+            
+            // Show progress
+            progressContainer.style.display = 'block';
+            progressBar.style.width = '0%';
+            progressText.textContent = '0%';
+            
+            // Upload files
+            fetch('/upload', {
+                method: 'POST',
+                body: formData
+            })
+            .then(response => response.json())
+            .then(data => {
+                sessionId = data.session_id;
+                startStatusPolling();
+            })
+            .catch(error => {
+                console.error('Upload error:', error);
+                showError('Fehler beim Hochladen der Dateien');
+            });
+        }
+        
+        function startStatusPolling() {
+            if (statusInterval) clearInterval(statusInterval);
+            
+            statusInterval = setInterval(() => {
+                fetch(`/status/${sessionId}`)
+                    .then(response => response.json())
+                    .then(data => {
+                        updateUI(data);
+                        
+                        if (data.status === 'completed' || data.status === 'error') {
+                            clearInterval(statusInterval);
+                            if (data.status === 'completed') {
+                                downloadSection.style.display = 'block';
+                            }
+                        }
+                    })
+                    .catch(error => {
+                        console.error('Status error:', error);
+                    });
+            }, 1000);
+        }
+        
+        function updateUI(data) {
+            // Update progress
+            progressBar.style.width = data.progress + '%';
+            progressText.textContent = data.progress + '%';
+            
+            // Update file list
+            fileList.innerHTML = '';
+            data.files.forEach(file => {
+                const fileItem = document.createElement('div');
+                fileItem.className = 'file-item';
+                
+                const fileName = document.createElement('div');
+                fileName.className = 'file-name';
+                fileName.innerHTML = `<span>${getFileIcon(file.name)}</span> ${file.name}`;
+                
+                const status = document.createElement('span');
+                status.className = `file-status status-${file.status}`;
+                const statusText = {
+                    'pending': '⏳ Ausstehend',
+                    'processing': '🔄 Verarbeitung',
+                    'success': '✅ Erfolgreich',
+                    'error': '❌ Fehler',
+                    'skipped': '⏭️ Übersprungen'
+                };
+                status.textContent = statusText[file.status] || file.status;
+                
+                fileItem.appendChild(fileName);
+                fileItem.appendChild(status);
+                fileList.appendChild(fileItem);
+            });
+            
+            // Update errors
+            if (data.errors && data.errors.length > 0) {
+                errorList.style.display = 'block';
+                errorList.innerHTML = '<h4>⚠️ Fehler:</h4>';
+                data.errors.forEach(error => {
+                    const errorItem = document.createElement('div');
+                    errorItem.className = 'error-item';
+                    errorItem.textContent = error;
+                    errorList.appendChild(errorItem);
+                });
+            }
+        }
+        
+        function getFileIcon(filename) {
+            const ext = filename.split('.').pop().toLowerCase();
+            const icons = {
+                'pdf': '📄',
+                'docx': '📝',
+                'xlsx': '📊',
+                'txt': '📃',
+                'md': '📝',
+                'py': '🐍',
+                'json': '📋',
+                'xml': '📋',
+                'yaml': '📋',
+                'yml': '📋',
+                'csv': '📊',
+                'html': '🌐',
+                'css': '🎨',
+                'js': '📜',
+                'jpg': '🖼️',
+                'jpeg': '🖼️',
+                'png': '🖼️',
+                'gif': '🖼️',
+                'zip': '📦'
+            };
+            return icons[ext] || '📎';
+        }
+        
+        function showError(message) {
+            errorList.style.display = 'block';
+            const errorItem = document.createElement('div');
+            errorItem.className = 'error-item';
+            errorItem.textContent = message;
+            errorList.appendChild(errorItem);
+        }
+        
+        // Download all
+        downloadAllBtn.addEventListener('click', () => {
+            if (sessionId) {
+                window.location.href = `/download/${sessionId}`;
+            }
+        });
+        
+        // Preview functionality
+        fileList.addEventListener('click', (e) => {
+            const fileItem = e.target.closest('.file-item');
+            if (!fileItem) return;
+            
+            const fileName = fileItem.querySelector('.file-name span')?.textContent || '';
+            if (!fileName) return;
+            
+            // Find converted file
+            fetch(`/status/${sessionId}`)
+                .then(response => response.json())
+                .then(data => {
+                    const converted = data.converted_files.find(f => 
+                        f.original === fileName || f.original === fileName
+                    );
+                    
+                    if (converted) {
+                        fetch(`/preview/${sessionId}/${converted.converted}`)
+                            .then(response => response.json())
+                            .then(data => {
+                                if (data.content) {
+                                    previewSection.style.display = 'block';
+                                    previewContent.textContent = data.content;
+                                }
+                            });
+                    }
+                });
+        });
+    </script>
+</body>
+</html>

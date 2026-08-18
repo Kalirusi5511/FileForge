@@ -1,0 +1,10 @@
+[project]
+name = "pokemon-preservation-mvp"
+version = "0.1.0"
+description = "Local-first Pokémon collection preservation MVP"
+requires-python = ">=3.11"
+license = {text = "GPL-3.0-or-later"}
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
